@@ -1,0 +1,26 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+opencv-python-headless>=4.10,<5
+numpy>=1.26
+scikit-image>=0.24
+scikit-learn>=1.5
+joblib>=1.4
+Pillow>=10.4
+torch>=2.3
+diffusers>=0.29
+transformers>=4.42
+accelerate>=0.31
+pymongo>=4.8
+dnspython>=2.3
+pydantic>=2.7
+pydantic-settings>=2.3
+python-jose[cryptography]>=3.3
+bcrypt>=4.1
+email-validator>=2.2
+slowapi>=0.1.9
+gunicorn>=22.0
+
+# Video pipeline: SCRFD detection + ArcFace embeddings (buffalo_l model pack)
+insightface>=0.7.3
+onnxruntime>=1.18

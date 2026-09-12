@@ -1,0 +1,34 @@
+# docker-compose.https.yml
+#
+# Optional overlay that puts Caddy in front of the stack for automatic,
+# zero-config HTTPS (Let's Encrypt) — use this if you're deploying directly
+# on a VM with a public domain instead of behind a cloud load balancer that
+# already terminates TLS for you.
+#
+# Usage:
+#   1. Point your domain's A/AAAA record at this host.
+#   2. Edit Caddyfile below: replace "your-domain.com" with your real domain.
+#   3. docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+#
+# Caddy takes over port 80/443; the frontend's own port mapping is removed
+# here since Caddy proxies to it internally on the compose network instead.
+services:
+  frontend:
+    ports: []  # no longer expose 80 directly — Caddy handles that
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  caddy-data:
+  caddy-config:

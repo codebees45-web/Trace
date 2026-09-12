@@ -1,0 +1,70 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # Frontend talks to the backend through nginx's /api proxy on the
+      # same origin, so CORS only needs to allow that origin (or none, if
+      # you're not calling the API directly from the browser on another
+      # domain). Override ALLOWED_ORIGINS in backend/.env for your real domain.
+      DATABASE_URL: sqlite:////app/data/trace.db
+      # This compose file is the production deployment path — this enables
+      # the strict startup checks in config.py (real JWT_SECRET required).
+      ENVIRONMENT: production
+    volumes:
+      # Persist the sqlite DB and any cached files across container recreates.
+      - trace-data:/app/data
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 6g
+        reservations:
+          memory: 2g
+
+  # Nightly SQLite snapshot into a separate volume, so a corrupted/deleted
+  # trace-data volume isn't a total-loss event. Not a substitute for offsite
+  # backups — for real production, also sync ./trace-backups elsewhere
+  # (e.g. an S3 bucket via a cron'd `aws s3 sync`).
+  backup:
+    image: keinos/sqlite3:latest
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        chmod +x /scripts/backup_sqlite.sh
+        while true; do /scripts/backup_sqlite.sh; sleep 86400; done
+    volumes:
+      - trace-data:/app/data:ro
+      - trace-backups:/app/backups
+      - ./backend/scripts/backup_sqlite.sh:/scripts/backup_sqlite.sh:ro
+    depends_on:
+      - backend
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  trace-data:
+  trace-backups:

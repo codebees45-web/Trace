@@ -1,0 +1,31 @@
+# --- Backend (Python) ---
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+backend/.env
+backend/trace.db
+backend/trace.db-wal
+backend/trace.db-shm
+backend/*.ipynb_checkpoints
+backend/venv/
+backend/.venv/
+backend/.pytest_cache/
+
+# --- Frontend (Node) ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# --- Dataset / large binaries (fetched or generated separately) ---
+datasets/images/*
+datasets/archives/*
+datasets/videos/with_mask/*
+datasets/videos/without_mask/*
+datasets/videos/gallery/*
+*.zip
+dataset/
+
+# --- Backups & OS cruft ---
+trace-backups/
+.DS_Store
+*.log
