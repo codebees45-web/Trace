@@ -357,6 +357,7 @@ button { font-family: var(--font-body); }
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid var(--line);
+  -webkit-user-select: none;
   user-select: none;
   cursor: ew-resize;
 }
@@ -539,6 +540,7 @@ button { font-family: var(--font-body); }
 .modal-backdrop {
   position: fixed; inset: 0;
   background: rgba(10, 9, 6, 0.6);
+  -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
   display: flex; align-items: center; justify-content: center;
   padding: 20px;
@@ -614,13 +616,17 @@ button { font-family: var(--font-body); }
 .modal-hint { font-size: 12px; color: var(--paper-faint); margin: -6px 0 0; }
 .modal-error {
   font-size: 13px; color: var(--unknown);
+  background: rgba(201, 122, 107, 0.12);
   background: color-mix(in srgb, var(--unknown) 12%, transparent);
+  border: 1px solid rgba(201, 122, 107, 0.35);
   border: 1px solid color-mix(in srgb, var(--unknown) 35%, transparent);
   border-radius: 6px; padding: 8px 12px; margin: 0;
 }
 .modal-success {
   font-size: 13px; color: var(--resolved);
+  background: rgba(227, 168, 87, 0.12);
   background: color-mix(in srgb, var(--resolved) 12%, transparent);
+  border: 1px solid rgba(227, 168, 87, 0.35);
   border: 1px solid color-mix(in srgb, var(--resolved) 35%, transparent);
   border-radius: 6px; padding: 8px 12px; margin: 0;
 }
@@ -793,8 +799,8 @@ button { font-family: var(--font-body); }
 /* ---------- Model Stats ---------- */
 .model-stats {
   background: color-mix(in srgb, var(--bg-raised) 70%, transparent);
-  backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 24px;
@@ -1202,7 +1208,6 @@ button { font-family: var(--font-body); }
 }
 
 /* ── Header ── */
-.live-camera-header {}
 .live-camera-title {
   display: flex;
   align-items: center;
@@ -1225,7 +1230,7 @@ button { font-family: var(--font-body); }
   border-radius: 50%;
   background: #475569;
   flex-shrink: 0;
-  transition: background 0.3s;
+  transition: background-color 0.3s;
 }
 .live-dot--active {
   background: #ef4444;
@@ -1297,6 +1302,7 @@ button { font-family: var(--font-body); }
   padding: 3px 10px;
   border-radius: 20px;
   background: rgba(15, 23, 42, 0.82);
+  -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
   font-size: 11.5px;
   font-weight: 600;
