@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     multi_face_detection: bool = True     # detect all faces, not just the largest
     top_k_results: int = 3               # number of top identity candidates to return
 
+    # Occlusion-aware embedding (additive/opt-in — default OFF, existing behaviour unchanged)
+    # When True, predict_identity() dims the surgical-mask region of the face crop
+    # to `occlusion_mask_alpha` before feeding it to ArcFace, biasing the embedding
+    # toward the visible upper-face region. See cnn_backbone.extract_cnn_features_occlusion_aware().
+    # Only applies to the 512-d ArcFace path; HOG/LBP paths are unaffected.
+    # Re-run calibrate.py after enabling if you use confidence calibration.
+    use_occlusion_aware_embedding: bool = False
+    occlusion_mask_alpha: float = 0.15   # pixel weight for the occluded lower-face region [0, 1]
+
     max_upload_mb: int = 8
     predict_rate_limit: str = "10/minute"
     auth_rate_limit: str = "5/minute"
@@ -51,15 +60,15 @@ class Settings(BaseSettings):
 
     # Video pipeline (SCRFD detection + ArcFace embedding + IOU tracking + voting)
     max_upload_video_mb: int = 200
-    video_rate_limit: str = "3/minute"
-    video_sample_every_n_frames: int = 6
-    video_max_frames_sampled: int = 900
-    video_det_size: int = 480
-    video_det_score_thresh: float = 0.45
+    video_rate_limit: str = "10/minute"
+    video_sample_every_n_frames: int = 20
+    video_max_frames_sampled: int = 120
+    video_det_size: int = 320
+    video_det_score_thresh: float = 0.30   # lowered: catch dark/small/angled faces
     video_track_iou_threshold: float = 0.3
     video_track_max_age: int = 15
-    video_min_similarity: float = 0.35
-    video_min_margin: float = 0.08
+    video_min_similarity: float = 0.28   # lowered: match enrolled identities more readily
+    video_min_margin: float = 0.05
 
     # Confidence calibration — maps raw ArcFace cosine similarity to the
     # displayed "confidence" percentage via a logistic curve, instead of
@@ -74,9 +83,16 @@ class Settings(BaseSettings):
 
     # Live camera WebSocket pipeline (/ws/live)
     # Uses the fast HOG/CNN pipeline — Stable Diffusion is always skipped.
-    live_camera_det_size: int = 320        # smaller input = faster Haar cascade scan
+    live_camera_det_size: int = 480        # raised: detect smaller faces in live video
     live_camera_skip_generation: bool = True   # never run SD inpainting on live frames
     live_camera_max_fps: int = 30          # hard cap: drop frames if backend is falling behind
+
+    # Cross-camera re-identification (additive subsystem — links sightings of
+    # the same person across different camera_id sessions via cosine similarity
+    # of their ArcFace embeddings).
+    # NOTE: 0.5 is a starting-point default.  Needs real tuning against actual
+    # multi-camera footage — too low → false merges, too high → missed links.
+    reid_similarity_threshold: float = 0.5
 
     # sqlite:// URLs only — ignored for other backends.
     sqlite_busy_timeout_ms: int = 5000

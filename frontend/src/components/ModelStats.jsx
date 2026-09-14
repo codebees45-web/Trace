@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Helper component for counting up
 const AnimatedCounter = ({ value, isPercentage, duration = 1500, visible }) => {

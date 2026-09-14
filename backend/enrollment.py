@@ -30,7 +30,15 @@ class GalleryEntry:
 
 
 class Gallery:
-    """In-memory + MongoDB-persisted store of enrolled identity embeddings."""
+    """In-memory + MongoDB-persisted store of enrolled identity embeddings.
+
+    Privacy by design: only numeric embedding vectors are persisted (in MongoDB's
+    ``gallery_embeddings`` collection).  Raw enrollment photos are decoded and
+    processed entirely in memory by the calling endpoint and are never written
+    to disk, logged, or stored in the database.  The embeddings themselves are
+    not reversible — there is no way to reconstruct the original face image
+    from the stored vector.
+    """
 
     def __init__(self, path: Optional[str] = None):
         self._entries: dict[str, GalleryEntry] = {}

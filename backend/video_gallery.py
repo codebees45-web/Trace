@@ -31,10 +31,19 @@ class VideoGalleryEntry:
 class VideoGallery:
     """In-memory + persisted store of enrolled ArcFace identity embeddings.
 
+    Privacy by design: only L2-normalized 512-d numeric embedding vectors are
+    persisted.  Raw enrollment photos uploaded via ``/enroll`` are decoded and
+    embedded entirely in memory by the endpoint handler and are never written to
+    disk, logged, or stored in any database collection.  The embeddings are not
+    reversible — there is no way to reconstruct the original face image from the
+    stored vector.
+
     Persistence priority:
-      1. MongoDB (when available) -- shared across processes, survives restarts.
-      2. Local JSON file (video_gallery_local.json) -- fallback when MongoDB is
-         not running. Survives server restarts; lost only if the file is deleted.
+      1. MongoDB (``video_gallery_embeddings`` collection, when available) --
+         shared across processes, survives restarts.
+      2. Local JSON file (``video_gallery_local.json``) -- fallback when MongoDB
+         is not running. Survives server restarts; lost only if the file is
+         deleted.
     """
 
     def __init__(self, path: Optional[str] = None):

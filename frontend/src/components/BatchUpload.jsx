@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import { useState } from "react";
 import api from "../api";
 
 const BatchUpload = ({ onResults }) => {

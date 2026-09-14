@@ -172,7 +172,7 @@ def main():
         "cv_accuracy": mean_cv_acc,
         "feature_dim": X_scaled.shape[1], # 512 dimensions from CNN Backbone
         "feature_mode": "Deep CNN Backbone (512-d)",
-        "backbone_architecture": "PyTorch MaskedFaceCNN (512-d)",
+        "backbone_architecture": "InsightFace ArcFace ResNet-50 (buffalo_l, 512-d)",
         "data_dirs": discovered_dirs,
     }
     

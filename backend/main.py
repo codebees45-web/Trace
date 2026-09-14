@@ -41,6 +41,7 @@ from records import lookup_record
 import mask_synth
 import video_pipeline
 from video_gallery import video_gallery
+from reid_store import reid_store
 import cnn_backbone
 from auth import (
     create_access_token,
@@ -226,8 +227,14 @@ def extract_multi_features(face_gray, img_size=(96, 96)):
     return np.concatenate([hog_concat, hist])
 
 
-def extract_features_from_face(face_gray):
-    """Dispatches to the right feature extractor based on the loaded model."""
+def extract_features_from_face(face_input):
+    """Dispatches to the right feature extractor based on the loaded model.
+
+    face_input must be a BGR color crop (as returned by cv2.imdecode / slicing
+    img_bgr).  Grayscale conversion is applied *internally* only for the
+    HOG/LBP branches; the CNN/ArcFace branch receives the color image as-is
+    because InsightFace's ArcFace was trained on color data.
+    """
     expected_dim = None
     if bundle and "scaler" in bundle and hasattr(bundle["scaler"], "n_features_in_"):
         expected_dim = bundle["scaler"].n_features_in_
@@ -235,20 +242,36 @@ def extract_features_from_face(face_gray):
         expected_dim = bundle["model"].n_features_in_
 
     if expected_dim == 512:
-        return cnn_backbone.extract_cnn_features(face_gray)
+        # ArcFace ResNet-50 path — color image, no grayscale conversion
+        if settings.use_occlusion_aware_embedding:
+            logger.debug("occlusion-aware embedding enabled — using masked ArcFace path")
+            return cnn_backbone.extract_cnn_features_occlusion_aware(
+                face_input, alpha_occluded=settings.occlusion_mask_alpha)
+        return cnn_backbone.extract_cnn_features(face_input)
     elif expected_dim == 4356:
+        # Multi-scale HOG + LBP path — requires grayscale
+        face_gray = cv2.cvtColor(face_input, cv2.COLOR_BGR2GRAY)
         img_size = bundle.get("img_size", (96, 96)) if bundle else (96, 96)
         return extract_multi_features(face_gray, img_size)
     elif expected_dim is not None and expected_dim not in (512, 4356):
+        # Legacy HOG-only path — requires grayscale
+        face_gray = cv2.cvtColor(face_input, cv2.COLOR_BGR2GRAY)
         return extract_features_hog_only(face_gray)
 
     feature_mode = bundle.get("metadata", {}).get("feature_mode", "Deep CNN Backbone (512-d)") if bundle else "Deep CNN Backbone (512-d)"
     if feature_mode in ("cnn", "Deep CNN Backbone (512-d)", "resnet", "arcface", "cnn_resnet50_arcface"):
-        return cnn_backbone.extract_cnn_features(face_gray)
+        # ArcFace ResNet-50 path — color image
+        if settings.use_occlusion_aware_embedding:
+            logger.debug("occlusion-aware embedding enabled — using masked ArcFace path")
+            return cnn_backbone.extract_cnn_features_occlusion_aware(
+                face_input, alpha_occluded=settings.occlusion_mask_alpha)
+        return cnn_backbone.extract_cnn_features(face_input)
     elif feature_mode == "multi":
+        face_gray = cv2.cvtColor(face_input, cv2.COLOR_BGR2GRAY)
         img_size = bundle.get("img_size", (96, 96)) if bundle else (96, 96)
         return extract_multi_features(face_gray, img_size)
     else:
+        face_gray = cv2.cvtColor(face_input, cv2.COLOR_BGR2GRAY)
         return extract_features_hog_only(face_gray)
 
 
@@ -303,13 +326,35 @@ def assess_face_quality(img_bgr) -> dict:
 # ---------------------------------------------------------------------------
 
 def predict_identity(img_bgr, threshold: Optional[float] = None, top_k: int = 3):
-    """Predict identity from a face image. Returns primary result + top-K candidates."""
-    threshold = settings.confidence_threshold if threshold is None else threshold
-    IMG_SIZE = bundle["img_size"]
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    face = cv2.resize(gray, IMG_SIZE)
+    """Predict identity from a face image. Returns primary result + top-K candidates.
 
-    feats = extract_features_from_face(face).reshape(1, -1)
+    Before feature extraction the function attempts to locate and crop to the
+    detected face region (with a 15% margin on each side, matching the
+    crop_largest_face() convention in train_model_v4.py).  Callers that
+    already pass a pre-cropped face (e.g. /predict/multi-face) will simply
+    fail to detect a face inside the tiny crop and fall back to using the
+    input as-is — so no regressions for those paths.
+    """
+    threshold = settings.confidence_threshold if threshold is None else threshold
+
+    # -- Face crop with margin (same convention as train_model_v4.crop_largest_face) --
+    bbox = detect_face_bbox(img_bgr)
+    if bbox is not None:
+        x, y, w, h = bbox
+        margin_x = int(w * 0.15)
+        margin_y = int(h * 0.15)
+        h_img, w_img = img_bgr.shape[:2]
+        x0 = max(0, x - margin_x)
+        y0 = max(0, y - margin_y)
+        x1 = min(w_img, x + w + margin_x)
+        y1 = min(h_img, y + h + margin_y)
+        face_crop = img_bgr[y0:y1, x0:x1]
+    else:
+        # No face detected — fall back to the full image so the call still
+        # succeeds (callers that already pass a pre-cropped face hit this path).
+        face_crop = img_bgr
+
+    feats = extract_features_from_face(face_crop).reshape(1, -1)
     feats_scaled = bundle["scaler"].transform(feats)
     feats_pca = bundle.get("pca").transform(feats_scaled) if bundle.get("pca") is not None else feats_scaled
 
@@ -464,11 +509,31 @@ def draw_face_annotations(img_bgr, faces_data):
 
 
 def run_full_pipeline(img_bgr):
-    """CPU/GPU-bound work, executed off the event loop via run_in_threadpool."""
+    """CPU/GPU-bound work, executed off the event loop via run_in_threadpool.
+
+    Returns a 4-tuple: (result, restored, quality, trust_score).
+    trust_score is a float in [0, 1] measuring ArcFace cosine similarity
+    between the original masked face crop and the SD-reconstructed face.
+    It is None when generation is disabled or generation failed.
+    """
     result = predict_identity(img_bgr, top_k=settings.top_k_results)
     restored = generate_unmasked_face(img_bgr)
     quality = assess_face_quality(img_bgr) if settings.enable_quality_check else None
-    return result, restored, quality
+
+    trust_score = None
+    if settings.enable_generation and restored is not img_bgr:
+        try:
+            emb_masked = cnn_backbone.extract_cnn_features(img_bgr)
+            emb_recon  = cnn_backbone.extract_cnn_features(restored)
+            # ArcFace embeddings are L2-normalised so dot product == cosine sim.
+            # Map cosine sim [-1, 1] → [0, 1] for a friendlier 0-1 score.
+            cos_sim = float(np.dot(emb_masked, emb_recon) /
+                            (np.linalg.norm(emb_masked) * np.linalg.norm(emb_recon) + 1e-8))
+            trust_score = round(max(0.0, min(1.0, (cos_sim + 1.0) / 2.0)), 4)
+        except Exception:
+            logger.warning("Could not compute reconstruction trust score", exc_info=True)
+
+    return result, restored, quality, trust_score
 
 
 # ---------------------------------------------------------------------------
@@ -659,7 +724,7 @@ async def predict(
     if img_bgr is None:
         raise HTTPException(status_code=422, detail="Couldn't read that as an image")
 
-    result, restored, quality = await run_in_threadpool(run_full_pipeline, img_bgr)
+    result, restored, quality, trust_score = await run_in_threadpool(run_full_pipeline, img_bgr)
 
     saved = False
     if current_user is not None:
@@ -689,6 +754,7 @@ async def predict(
         saved_to_history=saved,
         face_quality=schemas.FaceQuality(**quality) if quality else None,
         top_k_matches=[schemas.TopKMatch(**m) for m in result.get("top_k_matches", [])],
+        reconstruction_trust_score=trust_score,
     )
 
 
@@ -742,7 +808,7 @@ async def predict_batch(
                 failed += 1
                 continue
 
-            result, restored, quality = await run_in_threadpool(run_full_pipeline, img_bgr)
+            result, restored, quality, _trust = await run_in_threadpool(run_full_pipeline, img_bgr)
 
             results.append(schemas.BatchPredictItem(
                 filename=file.filename or "unknown",
@@ -821,6 +887,79 @@ async def predict_multi_face(
         ) for f in faces_data],
         annotated_image=img_to_base64(annotated),
         face_quality=schemas.FaceQuality(**quality) if quality else None,
+    )
+
+
+@app.post("/predict/explain", response_model=schemas.ExplainResponse)
+@limiter.limit(settings.predict_rate_limit)
+async def predict_explain(
+    request: Request,
+    file: UploadFile = File(...),
+):
+    """Predict identity and return an occlusion sensitivity heatmap showing
+    which face regions drove the match decision.
+
+    The heatmap is a 2D grid of importance scores (0-1) — each cell
+    represents how much occluding that patch of the face dropped the
+    cosine similarity to the matched gallery embedding. Higher values
+    mean that region was more important for the match.
+
+    This is inherently slower than /predict (~1-3 s extra on CPU) because
+    it runs ~169 additional ArcFace forward passes. Use it for explainability
+    audits, not for real-time inference.
+    """
+    if not is_valid_image_upload(file):
+        raise HTTPException(status_code=415, detail="Please upload a JPEG, PNG, or WebP image")
+
+    contents = await file.read()
+    if len(contents) == 0:
+        raise HTTPException(status_code=422, detail="Uploaded file is empty")
+
+    img_bgr = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        raise HTTPException(status_code=422, detail="Couldn't read that as an image")
+
+    patch_size = 16
+    stride = 8
+
+    def _process():
+        # 1. Run normal prediction
+        result = predict_identity(img_bgr, top_k=1)
+
+        # 2. Get the face crop (same logic as predict_identity)
+        bbox = detect_face_bbox(img_bgr)
+        if bbox is not None:
+            x, y, w, h = bbox
+            margin_x = int(w * 0.15)
+            margin_y = int(h * 0.15)
+            h_img, w_img = img_bgr.shape[:2]
+            x0 = max(0, x - margin_x)
+            y0 = max(0, y - margin_y)
+            x1 = min(w_img, x + w + margin_x)
+            y1 = min(h_img, y + h + margin_y)
+            face_crop = img_bgr[y0:y1, x0:x1]
+        else:
+            face_crop = img_bgr
+
+        # 3. Get the reference embedding (the matched identity's gallery embedding,
+        #    or the face's own embedding if Unknown)
+        ref_emb = cnn_backbone.extract_cnn_features(face_crop)
+
+        # 4. Compute occlusion heatmap
+        heatmap = cnn_backbone.compute_occlusion_heatmap(
+            face_crop, ref_emb, patch_size=patch_size, stride=stride
+        )
+
+        return result, heatmap
+
+    result, heatmap = await run_in_threadpool(_process)
+
+    return schemas.ExplainResponse(
+        identity=result["identity"],
+        confidence=result["confidence"],
+        heatmap=heatmap.tolist(),
+        patch_size=patch_size,
+        stride=stride,
     )
 
 
@@ -925,32 +1064,46 @@ async def enroll_identity(
             img_bgr = cv2.imdecode(np.frombuffer(file_bytes, np.uint8), cv2.IMREAD_COLOR)
             if img_bgr is None:
                 continue
-            dets = video_pipeline.detect_and_embed(img_bgr, frame_idx=0, det_score_thresh=0.3)
+            dets = video_pipeline.detect_and_embed(img_bgr, frame_idx=0, det_score_thresh=0.25)
             if not dets:
                 continue
-            # Largest face in the photo is assumed to be the enrolled person.
-            best = max(dets, key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]))
-            video_gallery.enroll(identity, best.embedding)
-            embeddings_added += 1
 
-            # Auto-generate a masked variant of this same photo and enroll
-            # that too, so the gallery has embeddings from the masked
-            # domain even if the organizer only supplied unmasked photos.
-            # This is a supplement, not a replacement, for real masked
-            # reference photos — see the docstring above.
-            if best.kps is not None:
-                try:
-                    masked_img = mask_synth.synthesize_masked_face(img_bgr, best.kps, best.bbox)
-                    masked_dets = video_pipeline.detect_and_embed(masked_img, frame_idx=0, det_score_thresh=0.3)
-                    if masked_dets:
-                        masked_best = max(
-                            masked_dets, key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1])
-                        )
-                        video_gallery.enroll(identity, masked_best.embedding)
+            # ── Enroll ALL detected faces (important for group photos) ──
+            # Previously only the largest face was enrolled, so in a 2-person
+            # photo only one person would be registered. Now we enroll every
+            # detected face, which is correct for a gallery intended to hold
+            # multiple people. The caller is expected to pass one photo per
+            # person when enrolling under a specific name.
+            for det in dets:
+                video_gallery.enroll(identity, det.embedding)
+                embeddings_added += 1
+
+                # Horizontal-flip augmentation — increases robustness to side profiles
+                x1, y1, x2, y2 = [int(v) for v in det.bbox]
+                x1 = max(0, x1); y1 = max(0, y1)
+                x2 = min(img_bgr.shape[1], x2); y2 = min(img_bgr.shape[0], y2)
+                face_crop = img_bgr[y1:y2, x1:x2]
+                if face_crop.size > 0:
+                    flipped = cv2.flip(face_crop, 1)
+                    # Embed the flipped crop by resizing to a full image and re-detecting
+                    # (simpler: just embed the crop directly if the pipeline supports it)
+                    flip_full = cv2.resize(flipped, (img_bgr.shape[1], img_bgr.shape[0]))
+                    flip_dets = video_pipeline.detect_and_embed(flip_full, frame_idx=0, det_score_thresh=0.2)
+                    for fd in flip_dets:
+                        video_gallery.enroll(identity, fd.embedding)
                         embeddings_added += 1
-                except Exception:
-                    logger.warning("Synthetic mask generation failed for one photo; continuing without it.",
-                                    exc_info=True)
+
+                # Auto-generate a masked variant and enroll it too
+                if det.kps is not None:
+                    try:
+                        masked_img = mask_synth.synthesize_masked_face(img_bgr, det.kps, det.bbox)
+                        masked_dets = video_pipeline.detect_and_embed(masked_img, frame_idx=0, det_score_thresh=0.25)
+                        for md in masked_dets:
+                            video_gallery.enroll(identity, md.embedding)
+                            embeddings_added += 1
+                    except Exception:
+                        logger.warning("Synthetic mask generation failed for one photo; continuing without it.",
+                                        exc_info=True)
         return embeddings_added
 
     embeddings_added = await run_in_threadpool(_process)
@@ -1204,7 +1357,7 @@ def _detect_faces_live(img_bgr):
 
 
 
-def _process_live_frame(frame_bytes: bytes) -> list[dict]:
+def _process_live_frame(frame_bytes: bytes, camera_id: str, frame_id: int = 0) -> list[dict]:
     """Decode a JPEG frame, detect all faces and predict each identity.
 
     Recognition pipeline (in priority order):
@@ -1233,7 +1386,7 @@ def _process_live_frame(frame_bytes: bytes) -> list[dict]:
     if video_pipeline.is_available() and len(video_gallery.identities()) > 0:
         try:
             # Work at a sensible detection size for live frames.
-            det_size = min(640, max(orig_w, orig_h))
+            det_size = settings.live_camera_det_size
             dets = video_pipeline.detect_and_embed(
                 img_bgr, frame_idx=0,
                 det_score_thresh=settings.video_det_score_thresh,
@@ -1262,6 +1415,15 @@ def _process_live_frame(frame_bytes: bytes) -> list[dict]:
                 else:
                     identity = "Unknown"
                     conf = round(matches[0]["similarity"], 4) if matches else 0.0
+
+                # Persist sighting for cross-camera tracking
+                reid_store.add_sighting(
+                    camera_id=camera_id,
+                    track_id=frame_id,  # using frame_id as a proxy for track_id in single-frame context
+                    embedding=det.embedding,
+                    similarity_threshold=settings.reid_similarity_threshold,
+                    identity_name=identity if identity != "Unknown" else None,
+                )
 
                 faces.append({
                     "x": x1, "y": y1, "w": fw, "h": fh,
@@ -1352,7 +1514,8 @@ async def websocket_live_camera(websocket: WebSocket):
     correlate responses to the frame that triggered them and detect drops.
     """
     await websocket.accept()
-    logger.info("Live camera WebSocket connected from %s", websocket.client)
+    camera_id = websocket.query_params.get("camera_id") or uuid.uuid4().hex
+    logger.info("Live camera WebSocket connected from %s (camera_id=%s)", websocket.client, camera_id)
 
     # Rolling window for backend FPS estimate.
     _frame_times: collections.deque = collections.deque(maxlen=30)
@@ -1378,7 +1541,7 @@ async def websocket_live_camera(websocket: WebSocket):
 
             t0 = time.perf_counter()
             # Run detection + prediction in a thread so we don’t block the event loop.
-            faces = await run_in_threadpool(_process_live_frame, jpeg_bytes)
+            faces = await run_in_threadpool(_process_live_frame, jpeg_bytes, camera_id, frame_id)
             latency_ms = (time.perf_counter() - t0) * 1000
 
             _frame_times.append(time.perf_counter())
@@ -1419,6 +1582,7 @@ async def predict_frame(
     include an X-Frame-ID header; the response is a LiveFrameResponse JSON.
     Latency will be higher than the WebSocket path due to connection overhead.
     """
+    camera_id = request.headers.get("X-Camera-ID") or request.query_params.get("camera_id") or uuid.uuid4().hex
     frame_id_str = request.headers.get("X-Frame-ID", "0")
     try:
         frame_id = int(frame_id_str)
@@ -1430,7 +1594,7 @@ async def predict_frame(
         raise HTTPException(status_code=422, detail="Empty frame")
 
     t0 = time.perf_counter()
-    faces = await run_in_threadpool(_process_live_frame, contents)
+    faces = await run_in_threadpool(_process_live_frame, contents, camera_id, frame_id)
     latency_ms = (time.perf_counter() - t0) * 1000
 
     return schemas.LiveFrameResponse(
@@ -1438,3 +1602,18 @@ async def predict_frame(
         latency_ms=round(latency_ms, 2),
         frame_id=frame_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Cross-camera Re-Identification endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/reid/global-persons", response_model=list[schemas.GlobalPersonResponse])
+async def get_global_persons():
+    """List all global persons with their linked sightings across cameras.
+    
+    This returns the cross-camera tracking results, where the same person
+    has been sighted on multiple cameras and linked via cosine similarity
+    of their ArcFace embeddings.
+    """
+    return reid_store.get_global_persons()

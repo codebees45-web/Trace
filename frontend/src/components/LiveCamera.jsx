@@ -12,7 +12,7 @@
  *
  * Falls back to HTTP POST /predict/frame if WebSocket is unavailable.
  */
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import api from "../api";
 
 // Base URL for WebSocket (swap http(s) → ws(s)).
@@ -46,14 +46,15 @@ const colorForIdentity = (() => {
 
 const CAPTURE_QUALITY = 0.80;   // JPEG quality — high enough for reliable face detection
 const TARGET_W = 640;           // must match backend _process_live_frame target_w=640
-const FRAME_INTERVAL_MS = 100;  // ~10 fps capture rate
+const FRAME_INTERVAL_MS = 200;  // ~5 fps — don't flood backend; it takes ~300-800ms per frame
 
 export default function LiveCamera() {
   const videoRef = useRef(null);
   const captureCanvasRef = useRef(null); // off-screen canvas for frame capture
   const overlayCanvasRef = useRef(null); // visible overlay for face boxes
   const wsRef = useRef(null);
-  const frameIdRef = useRef(0);
+  const frameIdRef = useRef(1);
+  const lastAckedFrameRef = useRef(0);
   const animFrameRef = useRef(null);
   const lastSendRef = useRef(0);
   const pendingRef = useRef(false);   // true while a frame is in flight (HTTP fallback)
@@ -62,9 +63,30 @@ export default function LiveCamera() {
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
+  const [wsConnecting, setWsConnecting] = useState(false); // true while WS handshake in progress
   const [usingFallback, setUsingFallback] = useState(false);
   const [stats, setStats] = useState({ latency: null, fps: null, detected: 0 });
   const [lastFaces, setLastFaces] = useState([]);
+
+  const [devices, setDevices] = useState([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState("");
+
+  const [sourceMode, setSourceMode] = useState("webcam"); // "webcam" | "video"
+  const [videoFile, setVideoFile] = useState(null);
+  const [videoUrl, setVideoUrl] = useState(null);
+
+  // ─── fetch devices on mount ───────────────────────────────────────────────
+  useEffect(() => {
+    navigator.mediaDevices.enumerateDevices()
+      .then(devs => {
+        const videoInputs = devs.filter(d => d.kind === "videoinput");
+        setDevices(videoInputs);
+        if (videoInputs.length > 0) {
+          setSelectedDeviceId(videoInputs[0].deviceId);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // ─── draw overlay ───────────────────────────────────────────────────────────
   const drawOverlay = useCallback((faces, videoEl, canvas) => {
@@ -89,12 +111,15 @@ export default function LiveCamera() {
     const scaleX = dw / sentW;
     const scaleY = dh / sentH;
 
-    // Apply a horizontal mirror on the canvas so the webcam looks like a
-    // selfie camera (matching natural user expectation). Text is drawn with
-    // a local counter-transform so it stays readable.
+    const isWebcam = sourceMode === "webcam";
+
     ctx.save();
-    ctx.translate(dw, 0);
-    ctx.scale(-1, 1);
+    if (isWebcam) {
+      // Apply a horizontal mirror on the canvas so the webcam looks like a
+      // selfie camera (matching natural user expectation).
+      ctx.translate(dw, 0);
+      ctx.scale(-1, 1);
+    }
 
     faces.forEach((face) => {
       const x = face.x * scaleX;
@@ -129,33 +154,55 @@ export default function LiveCamera() {
         ctx.stroke();
       });
 
-      // Label pill — drawn with a counter-mirror so text is readable.
+      // Label pill
       ctx.font = "bold 13px 'Inter', sans-serif";
       const tw = ctx.measureText(label).width;
       const pad = 6;
       const lh  = 22;
-      const lx  = x;
+      let lx  = x;
+      // If not webcam, text starts at the left edge of the bounding box
+      // If webcam, because we mirrored the canvas, x is technically mirrored. We need to handle pill placement carefully.
       const ly  = y > lh + 4 ? y - lh - 4 : y + h + 4;
 
-      // Draw pill background (still in mirrored space — looks fine).
+      // Draw pill background
       ctx.fillStyle = color + "DD";
       ctx.beginPath();
       ctx.roundRect(lx, ly, tw + pad * 2, lh, 5);
       ctx.fill();
 
-      // Counter-mirror just for the text so it reads left-to-right.
+      // Text drawing
       ctx.save();
-      ctx.scale(-1, 1);
-      ctx.fillStyle = "#0F172A";
-      // The mirrored x of the pill's left edge is -(lx + pad); the pill right
-      // edge in mirrored space is -(lx + tw + pad). We want text to start at
-      // the left edge of the pill, which in counter-mirrored coords is:
-      ctx.fillText(label, -(lx + tw + pad), ly + lh - 5);
+      if (isWebcam) {
+        // Counter-mirror just for the text so it reads left-to-right.
+        ctx.scale(-1, 1);
+        ctx.fillStyle = "#0F172A";
+        // The mirrored x of the pill's left edge is -(lx + pad); the pill right
+        // edge in mirrored space is -(lx + tw + pad). We want text to start at
+        // the left edge of the pill, which in counter-mirrored coords is:
+        ctx.fillText(label, -(lx + tw + pad), ly + lh - 5);
+      } else {
+        ctx.fillStyle = "#0F172A";
+        ctx.fillText(label, lx + pad, ly + lh - 5);
+      }
       ctx.restore();
     });
 
-    ctx.restore(); // undo the global scaleX(-1) mirror
-  }, []);
+    ctx.restore(); // undo the global save()
+  }, [sourceMode]);
+
+  const handleResult = useCallback(
+    (data) => {
+      if (data.frame_id) lastAckedFrameRef.current = data.frame_id;
+      setLastFaces(data.faces || []);
+      setStats({
+        latency : data.latency_ms,
+        fps     : data.fps ?? null,
+        detected: (data.faces || []).length,
+      });
+      drawOverlay(data.faces, videoRef.current, overlayCanvasRef.current);
+    },
+    [drawOverlay]
+  );
 
 
   // ─── send one frame ─────────────────────────────────────────────────────────
@@ -163,6 +210,24 @@ export default function LiveCamera() {
     const video  = videoRef.current;
     const canvas = captureCanvasRef.current;
     if (!video || !canvas || video.readyState < 2) return;
+
+    // Determine if backend is currently processing a frame
+    const wsBusy = wsRef.current && wsRef.current.readyState === WebSocket.OPEN && (frameIdRef.current - 1 > lastAckedFrameRef.current);
+    const backendBusy = pendingRef.current || wsBusy || (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING);
+
+    // Sync video file playback with backend inference speed
+    // This perfectly aligns bounding boxes with the video, preventing them from drifting
+    // if the backend takes longer than the video framerate to process a frame.
+    if (sourceMode === "video") {
+      if (backendBusy) {
+        video.pause();
+        return;
+      } else {
+        video.play().catch(() => {});
+      }
+    } else {
+      if (backendBusy) return; // webcam: just drop the frame
+    }
 
     const vw = video.videoWidth;
     const vh = video.videoHeight;
@@ -194,20 +259,19 @@ export default function LiveCamera() {
             const msg = new Uint8Array(4 + ab.byteLength);
             msg.set(header, 0);
             msg.set(new Uint8Array(ab), 4);
-            try { wsRef.current.send(msg.buffer); } catch (_) {}
+            try { wsRef.current.send(msg.buffer); } catch { /* ignore */ }
           });
           return;
         }
 
         // ── HTTP fallback ───────────────────────────────────────────────
-        if (pendingRef.current) return; // skip if previous request still in flight
         pendingRef.current = true;
         const form = new FormData();
         form.append("file", blob, "frame.jpg");
         api
           .post("/predict/frame", form, {
             headers: { "Content-Type": "multipart/form-data", "X-Frame-ID": String(frameId) },
-            timeout: 3000,
+            timeout: 15000,  // backend may take 300ms–5s depending on CPU load
           })
           .then((res) => handleResult(res.data))
           .catch(() => {})
@@ -216,20 +280,8 @@ export default function LiveCamera() {
       "image/jpeg",
       CAPTURE_QUALITY
     );
-  }, []);
+  }, [handleResult]);
 
-  const handleResult = useCallback(
-    (data) => {
-      setLastFaces(data.faces || []);
-      setStats({
-        latency : data.latency_ms,
-        fps     : data.fps ?? null,
-        detected: (data.faces || []).length,
-      });
-      drawOverlay(data.faces, videoRef.current, overlayCanvasRef.current);
-    },
-    [drawOverlay]
-  );
 
   // ─── WebSocket lifecycle ─────────────────────────────────────────────────
   const connectWs = useCallback(() => {
@@ -241,37 +293,58 @@ export default function LiveCamera() {
     const url = getWsUrl("/ws/live");
     let ws;
     try { ws = new WebSocket(url); }
-    catch (_) { setUsingFallback(true); return; }
+    catch { setUsingFallback(true); return; }
     wsRef.current = ws;
     ws.binaryType = "arraybuffer";
+    setWsConnecting(true);
 
-    ws.onopen  = ()  => { setWsConnected(true); setUsingFallback(false); };
-    ws.onclose = ()  => { setWsConnected(false); setUsingFallback(true); };
-    ws.onerror = ()  => { setWsConnected(false); setUsingFallback(true); };
+    ws.onopen  = ()  => { setWsConnected(true); setWsConnecting(false); setUsingFallback(false); };
+    ws.onclose = ()  => { setWsConnected(false); setWsConnecting(false); setUsingFallback(true); };
+    ws.onerror = ()  => { setWsConnected(false); setWsConnecting(false); setUsingFallback(true); };
     ws.onmessage = (ev) => {
-      try { handleResult(JSON.parse(ev.data)); } catch (_) {}
+      try { handleResult(JSON.parse(ev.data)); } catch { /* ignore */ }
     };
   }, [handleResult]);
 
   // ─── animation loop ──────────────────────────────────────────────────────
-  const loop = useCallback(() => {
+  const loop = useCallback(function loopFn() {
     sendFrame();
-    animFrameRef.current = requestAnimationFrame(loop);
+    animFrameRef.current = requestAnimationFrame(loopFn);
   }, [sendFrame]);
 
   // ─── start / stop camera ─────────────────────────────────────────────────
   const startCamera = useCallback(async () => {
     setCameraError(null);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+      if (sourceMode === "webcam") {
+        const constraints = {
+          video: selectedDeviceId 
+            ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+            : { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+          audio: false,
+        };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+      } else {
+        if (!videoFile) {
+          setCameraError("Please select a video file first.");
+          return;
+        }
+        if (videoUrl) URL.revokeObjectURL(videoUrl);
+        const url = URL.createObjectURL(videoFile);
+        setVideoUrl(url);
+        if (videoRef.current) {
+          videoRef.current.srcObject = null;
+          videoRef.current.src = url;
+          videoRef.current.loop = true;
+          await videoRef.current.play();
+        }
       }
+
       connectWs();
       setCameraActive(true);
       animFrameRef.current = requestAnimationFrame(loop);
@@ -279,16 +352,19 @@ export default function LiveCamera() {
       setCameraError(
         err.name === "NotAllowedError"
           ? "Camera permission denied. Please allow camera access and try again."
-          : `Could not open camera: ${err.message}`
+          : `Could not open camera/video: ${err.message}`
       );
     }
-  }, [connectWs, loop]);
+  }, [connectWs, loop, selectedDeviceId, sourceMode, videoFile, videoUrl]);
 
   const stopCamera = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current);
     if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); wsRef.current = null; }
     if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
-    if (videoRef.current) videoRef.current.srcObject = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+      videoRef.current.src = "";
+    }
     setWsConnected(false);
     setCameraActive(false);
     setLastFaces([]);
@@ -343,10 +419,12 @@ export default function LiveCamera() {
             <span className="live-hud-chip">
               {wsConnected
                 ? <span className="hud-dot hud-dot--green" />
+                : wsConnecting
+                ? <span className="hud-dot hud-dot--yellow" />
                 : usingFallback
                 ? <span className="hud-dot hud-dot--yellow" />
                 : <span className="hud-dot hud-dot--red" />}
-              {wsConnected ? "WebSocket" : usingFallback ? "HTTP fallback" : "Connecting…"}
+              {wsConnected ? "WebSocket" : wsConnecting ? "Connecting…" : usingFallback ? "HTTP fallback" : "Connecting…"}
             </span>
             {stats.latency !== null && (
               <span className="live-hud-chip">⚡ {stats.latency.toFixed(0)} ms</span>
@@ -362,14 +440,56 @@ export default function LiveCamera() {
       </div>
 
       {/* ── Controls ── */}
-      <div className="live-controls">
+      <div className="live-controls" style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
         {!cameraActive ? (
-          <button className="btn btn-primary live-btn" onClick={startCamera} id="live-start-btn">
-            <span>▶ Start Camera</span>
-          </button>
+          <>
+            <button className="btn btn-primary live-btn" onClick={startCamera} id="live-start-btn">
+              <span>▶ Start Analysis</span>
+            </button>
+            <select 
+              value={sourceMode} 
+              onChange={(e) => setSourceMode(e.target.value)}
+              style={{ 
+                background: "var(--bg-raised)", color: "var(--paper)", 
+                border: "1px solid var(--line)", padding: "8px 12px", borderRadius: "4px",
+                fontFamily: "var(--font-mono)", fontSize: "12px"
+              }}
+            >
+              <option value="webcam">Webcam</option>
+              <option value="video">Video File</option>
+            </select>
+            {sourceMode === "webcam" && devices.length > 1 && (
+              <select 
+                value={selectedDeviceId} 
+                onChange={(e) => setSelectedDeviceId(e.target.value)}
+                style={{ 
+                  background: "var(--bg-raised)", color: "var(--paper)", 
+                  border: "1px solid var(--line)", padding: "8px 12px", borderRadius: "4px",
+                  fontFamily: "var(--font-mono)", fontSize: "12px"
+                }}
+              >
+                {devices.map(d => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label || `Camera ${devices.indexOf(d) + 1}`}
+                  </option>
+                ))}
+              </select>
+            )}
+            {sourceMode === "video" && (
+              <input 
+                type="file" 
+                accept="video/*" 
+                onChange={(e) => setVideoFile(e.target.files[0])}
+                style={{ 
+                  color: "var(--paper)", 
+                  fontFamily: "var(--font-mono)", fontSize: "12px"
+                }}
+              />
+            )}
+          </>
         ) : (
           <button className="btn live-btn live-btn--stop" onClick={stopCamera} id="live-stop-btn">
-            <span>■ Stop Camera</span>
+            <span>■ Stop Analysis</span>
           </button>
         )}
       </div>

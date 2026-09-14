@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect } from "react";
 import Webcam from "react-webcam";
 import api from "./api";
 import "./App.css";
@@ -66,7 +66,7 @@ const PIPELINE_STEPS = [
 function HogHero() {
   const cols = 28;
   const rows = 22;
-  const ticks = useMemo(() => {
+  const [ticks] = useState(() => {
     const arr = [];
     const cx = cols / 2;
     const cy = rows / 2;
@@ -83,7 +83,7 @@ function HogHero() {
       }
     }
     return arr;
-  }, []);
+  });
 
   const [resolved, setResolved] = useState(false);
   useEffect(() => {
@@ -234,22 +234,25 @@ function App() {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [resetToken, setResetToken] = useState(null);
+  const [resetToken, setResetToken] = useState(() => {
+    if (typeof window !== "undefined") {
+      return new URLSearchParams(window.location.search).get("reset_token");
+    }
+    return null;
+  });
   const [modelStats, setModelStats] = useState(null);
   const [batchResults, setBatchResults] = useState([]);
 
   // Password-reset links point back here as ?reset_token=... — pick it up
   // once on load and strip it from the URL so refreshing doesn't re-trigger it.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("reset_token");
-    if (token) {
-      setResetToken(token);
+    if (resetToken) {
+      const params = new URLSearchParams(window.location.search);
       params.delete("reset_token");
       const rest = params.toString();
       window.history.replaceState({}, "", window.location.pathname + (rest ? `?${rest}` : ""));
     }
-  }, []);
+  }, [resetToken]);
 
   // Fetch model stats on mount
   useEffect(() => {
@@ -260,7 +263,6 @@ function App() {
 
   useEffect(() => {
     if (!loading) return;
-    setStageIndex(0);
     const interval = setInterval(() => {
       setStageIndex((i) => Math.min(i + 1, ANALYSIS_STAGES.length - 1));
     }, 1200);
@@ -269,6 +271,7 @@ function App() {
 
   const sendToBackend = async (blob) => {
     setLoading(true);
+    setStageIndex(0);
     setResult(null);
     setPredictError(null);
     const formData = new FormData();

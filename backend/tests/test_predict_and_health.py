@@ -57,6 +57,8 @@ def test_predict_accepts_valid_image_anonymously(client):
     assert "identity" in body
     assert 0.0 <= body["confidence"] <= 1.0
     assert body["saved_to_history"] is False  # no auth token supplied
+    assert "reconstruction_trust_score" in body
+    assert body["reconstruction_trust_score"] is None  # ENABLE_GENERATION=false in test env
 
 
 def test_predict_saves_history_when_authenticated(client, auth_headers):

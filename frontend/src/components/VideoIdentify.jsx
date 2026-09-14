@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import api from "../api";
 
 // Enroll 2+ people from a couple of reference photos each, then run a

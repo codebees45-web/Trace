@@ -33,7 +33,7 @@ try:
     from main import predict_identity
     img = cv2.imread(test_img_path)
     result = predict_identity(img)
-    print(f"[OK] Recognition works. Predicted: {result['identity']} ({result['confidence']:.1%})")
+    print(f"[OK] Recognition works (auto-cropped internally). Predicted: {result['identity']} ({result['confidence']:.1%})")
 except Exception as e:
     print(f"[FAIL] Recognition failed: {e}")
     sys.exit(1)

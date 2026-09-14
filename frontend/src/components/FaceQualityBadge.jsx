@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 
 const FaceQualityBadge = ({ quality }) => {
   const [isHovered, setIsHovered] = useState(false);
@@ -7,18 +7,8 @@ const FaceQualityBadge = ({ quality }) => {
 
   const { overall, blur_score, brightness_score, resolution_ok } = quality;
 
-  let badgeClass = "quality-badge ";
-  let icon = "";
-  if (overall === "good") {
-    badgeClass += "quality-good";
-    icon = "🟢";
-  } else if (overall === "fair") {
-    badgeClass += "quality-fair";
-    icon = "🟡";
-  } else {
-    badgeClass += "quality-poor";
-    icon = "🔴";
-  }
+  const badgeClass = "quality-badge " + (overall === "good" ? "quality-good" : overall === "fair" ? "quality-fair" : "quality-poor");
+  const icon = overall === "good" ? "🟢" : overall === "fair" ? "🟡" : "🔴";
 
   return (
     <div 

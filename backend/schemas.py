@@ -92,6 +92,20 @@ class PredictResponse(BaseModel):
     saved_to_history: bool
     face_quality: Optional[FaceQuality] = None
     top_k_matches: list[TopKMatch] = []
+    reconstruction_trust_score: Optional[float] = None
+    """ArcFace cosine similarity [0, 1] between the masked face crop and the
+    SD-reconstructed face. Higher values mean the reconstruction faithfully
+    preserves the detected identity. Null when generation is disabled or
+    generation failed."""
+
+
+class ExplainResponse(BaseModel):
+    """Response for the occlusion sensitivity heatmap endpoint."""
+    identity: str
+    confidence: float
+    heatmap: list[list[float]]
+    patch_size: int
+    stride: int
 
 
 class FaceDetection(BaseModel):
@@ -222,3 +236,23 @@ class LiveFrameResponse(BaseModel):
     latency_ms: float        # backend processing time for this frame
     frame_id: int            # echoes back the client-supplied frame counter
     fps: float = 0.0         # rolling backend throughput estimate
+
+
+# ---------------------------------------------------------------------------
+# Cross-camera Re-Identification schemas
+# ---------------------------------------------------------------------------
+
+class GlobalPersonSighting(BaseModel):
+    sighting_id: str
+    camera_id: str
+    track_id: int
+    first_seen: float
+    last_seen: float
+    identity_name: Optional[str] = None
+
+
+class GlobalPersonResponse(BaseModel):
+    global_person_id: str
+    identity_name: Optional[str] = None
+    cameras: list[str]
+    sightings: list[GlobalPersonSighting]
