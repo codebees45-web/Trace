@@ -280,7 +280,7 @@ export default function LiveCamera() {
       "image/jpeg",
       CAPTURE_QUALITY
     );
-  }, [handleResult]);
+  }, [handleResult, sourceMode]);
 
 
   // ─── WebSocket lifecycle ─────────────────────────────────────────────────
