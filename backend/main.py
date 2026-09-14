@@ -517,16 +517,28 @@ def run_full_pipeline(img_bgr):
     It is None when generation is disabled or generation failed.
     """
     result = predict_identity(img_bgr, top_k=settings.top_k_results)
-    restored = generate_unmasked_face(img_bgr)
+
+    # Only run SD inpainting if a mask is actually detected — otherwise
+    # generate_unmasked_face() distorts already-clear faces for no reason.
+    bbox = detect_face_bbox(img_bgr)
+    should_generate = settings.enable_generation and (
+        bbox is None or is_wearing_mask(img_bgr, bbox)
+    )
+    # bbox is None → can't tell, fail open to the old behavior (safer than
+    # silently skipping generation for every undetected face)
+
+    if should_generate:
+        restored = generate_unmasked_face(img_bgr)
+    else:
+        restored = img_bgr
+
     quality = assess_face_quality(img_bgr) if settings.enable_quality_check else None
 
     trust_score = None
-    if settings.enable_generation and restored is not img_bgr:
+    if settings.enable_generation and should_generate and restored is not img_bgr:
         try:
             emb_masked = cnn_backbone.extract_cnn_features(img_bgr)
             emb_recon  = cnn_backbone.extract_cnn_features(restored)
-            # ArcFace embeddings are L2-normalised so dot product == cosine sim.
-            # Map cosine sim [-1, 1] → [0, 1] for a friendlier 0-1 score.
             cos_sim = float(np.dot(emb_masked, emb_recon) /
                             (np.linalg.norm(emb_masked) * np.linalg.norm(emb_recon) + 1e-8))
             trust_score = round(max(0.0, min(1.0, (cos_sim + 1.0) / 2.0)), 4)
