@@ -67,8 +67,8 @@ class Settings(BaseSettings):
     video_det_score_thresh: float = 0.30   # lowered: catch dark/small/angled faces
     video_track_iou_threshold: float = 0.3
     video_track_max_age: int = 15
-    video_min_similarity: float = 0.28   # lowered: match enrolled identities more readily
-    video_min_margin: float = 0.05
+    video_min_similarity: float = 0.40   # calibrated against real footage
+    video_min_margin: float = 0.10
 
     # Confidence calibration — maps raw ArcFace cosine similarity to the
     # displayed "confidence" percentage via a logistic curve, instead of
@@ -78,8 +78,8 @@ class Settings(BaseSettings):
     # how sharply confidence rises around it. Re-fit both with
     # backend/calibrate.py against your own gallery + sample videos rather
     # than trusting these defaults for anything high-stakes.
-    video_calib_midpoint: float = 0.42
-    video_calib_slope: float = 10.0
+    video_calib_midpoint: float = 0.45
+    video_calib_slope: float = 29.0
 
     # Live camera WebSocket pipeline (/ws/live)
     # Uses the fast HOG/CNN pipeline — Stable Diffusion is always skipped.

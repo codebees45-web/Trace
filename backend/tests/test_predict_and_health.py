@@ -1,4 +1,5 @@
 import io
+import sys
 
 from PIL import Image
 
@@ -8,6 +9,19 @@ def _tiny_jpeg_bytes():
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
     return buf.getvalue()
+
+
+def test_cnn_backbone_imports_without_torch(monkeypatch):
+    """Ensure that importing cnn_backbone doesn't require torch, as the live path uses ArcFace."""
+    # Mask out torch from sys.modules
+    monkeypatch.setitem(sys.modules, "torch", None)
+    
+    # Force reload of cnn_backbone if it's already loaded by other tests
+    if "cnn_backbone" in sys.modules:
+        del sys.modules["cnn_backbone"]
+        
+    import cnn_backbone  # Should not raise ImportError
+    assert hasattr(cnn_backbone, "extract_cnn_features")
 
 
 def test_health_reports_ok(client):
@@ -48,12 +62,16 @@ def test_predict_rejects_corrupt_image_bytes(client):
 
 
 def test_predict_accepts_valid_image_anonymously(client):
+    with open("test_client.jpg", "rb") as f:
+        img_bytes = f.read()
+
     resp = client.post(
         "/predict",
-        files={"file": ("face.jpg", _tiny_jpeg_bytes(), "image/jpeg")},
+        files={"file": ("face.jpg", img_bytes, "image/jpeg")},
     )
     assert resp.status_code == 200
     body = resp.json()
+    assert body["face_detected"] is True
     assert "identity" in body
     assert 0.0 <= body["confidence"] <= 1.0
     assert body["saved_to_history"] is False  # no auth token supplied

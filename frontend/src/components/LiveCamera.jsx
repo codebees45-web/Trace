@@ -17,7 +17,7 @@ import api from "../api";
 
 // Base URL for WebSocket (swap http(s) → ws(s)).
 function getWsUrl(path) {
-  const base = (api.defaults.baseURL || "http://localhost:8000").replace(
+  const base = (api.defaults.baseURL || "http://localhost:8002").replace(
     /^http/,
     "ws"
   );
@@ -108,8 +108,28 @@ export default function LiveCamera() {
     // coordinates back to the displayed video size.
     const sentW  = Math.min(vw, TARGET_W);
     const sentH  = Math.round(vh * (sentW / vw));
-    const scaleX = dw / sentW;
-    const scaleY = dh / sentH;
+
+    // Account for object-fit: contain letterboxing —
+    // the video maintains aspect ratio within the container, so we need
+    // to compute the actual rendered area and offset.
+    const videoAspect  = sentW / sentH;
+    const canvasAspect = dw / dh;
+    let renderedW, renderedH, offsetX, offsetY;
+    if (videoAspect > canvasAspect) {
+      // Video is wider — fits to width, letterboxed top/bottom
+      renderedW = dw;
+      renderedH = dw / videoAspect;
+      offsetX = 0;
+      offsetY = (dh - renderedH) / 2;
+    } else {
+      // Video is taller — fits to height, letterboxed left/right
+      renderedH = dh;
+      renderedW = dh * videoAspect;
+      offsetX = (dw - renderedW) / 2;
+      offsetY = 0;
+    }
+    const scaleX = renderedW / sentW;
+    const scaleY = renderedH / sentH;
 
     const isWebcam = sourceMode === "webcam";
 
@@ -122,8 +142,8 @@ export default function LiveCamera() {
     }
 
     faces.forEach((face) => {
-      const x = face.x * scaleX;
-      const y = face.y * scaleY;
+      const x = face.x * scaleX + offsetX;
+      const y = face.y * scaleY + offsetY;
       const w = face.w * scaleX;
       const h = face.h * scaleY;
 
@@ -215,19 +235,9 @@ export default function LiveCamera() {
     const wsBusy = wsRef.current && wsRef.current.readyState === WebSocket.OPEN && (frameIdRef.current - 1 > lastAckedFrameRef.current);
     const backendBusy = pendingRef.current || wsBusy || (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING);
 
-    // Sync video file playback with backend inference speed
-    // This perfectly aligns bounding boxes with the video, preventing them from drifting
-    // if the backend takes longer than the video framerate to process a frame.
-    if (sourceMode === "video") {
-      if (backendBusy) {
-        video.pause();
-        return;
-      } else {
-        video.play().catch(() => {});
-      }
-    } else {
-      if (backendBusy) return; // webcam: just drop the frame
-    }
+    // Don't send if backend is still processing the previous frame;
+    // just drop frames and keep the video playing smoothly.
+    if (backendBusy) return;
 
     const vw = video.videoWidth;
     const vh = video.videoHeight;
@@ -395,7 +405,7 @@ export default function LiveCamera() {
       <div className="live-viewport">
         <video
           ref={videoRef}
-          className="live-video"
+          className={`live-video${sourceMode === "webcam" ? " live-video--mirrored" : ""}`}
           playsInline
           muted
           autoPlay

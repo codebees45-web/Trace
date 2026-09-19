@@ -46,12 +46,13 @@ from video_gallery import VideoGallery
 # Each tuple is (path_to_video, identity_name_as_enrolled_in_gallery).
 # ---------------------------------------------------------------------------
 GENUINE_PAIRS: list[tuple[str, str]] = [
-    # ("clips/alice_walking.mp4", "alice"),
-    # ("clips/bob_hallway.mp4", "bob"),
+    ("C:/Users/HP/Downloads/Trace-main/Trace-main/datasets/real_people/alice/video.mp4", "alice"),
+    ("C:/Users/HP/Downloads/Trace-main/Trace-main/datasets/real_people/bob/video.mp4", "bob"),
 ]
 
 IMPOSTOR_PAIRS: list[tuple[str, str]] = [
-    # ("clips/bob_hallway.mp4", "alice"),   # bob's video checked against alice's gallery entry
+    # Generated impostor example (please verify this makes sense):
+    ("C:/Users/HP/Downloads/Trace-main/Trace-main/datasets/real_people/alice/video.mp4", "bob"),
 ]
 
 SAMPLE_EVERY_N_FRAMES = 6

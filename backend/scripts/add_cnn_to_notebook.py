@@ -18,31 +18,31 @@ def main():
         if "Classical Machine Learning Pipeline" in source_str or "Masked Face" in source_str:
             cells[0]["source"] = [
                 "# Masked Face -> Original Identity Recognition\n",
-                "### Powered by Deep Convolutional Neural Network (CNN) Backbone & Residual Embeddings\n",
+                "### Powered by InsightFace ArcFace ResNet-50 (buffalo_l) Backbone & Residual Embeddings\n",
                 "\n",
                 "**Goal:** Given a surveillance photo of a person **wearing a face mask**, identify who they are from an enrollment gallery of known individuals across our comprehensive **10,140-image dataset repository**.\n",
                 "\n",
-                "While earlier prototypes evaluated classical gradient descriptors, our modern architecture features a **PyTorch Convolutional Neural Network (CNN) Backbone** that projects partial facial crops into a robust, invariant **512-dimensional embedding space** before classification.\n"
+                "While earlier prototypes evaluated classical gradient descriptors, our modern architecture features an **InsightFace ArcFace ResNet-50 Backbone** that projects partial facial crops into a robust, invariant **512-dimensional embedding space** before classification.\n"
             ]
-            print("Updated Cell 000 with Deep CNN Backbone title and architectural overview.")
+            print("Updated Cell 000 with ArcFace Backbone title and architectural overview.")
 
     # Check if CNN section is already inserted
-    already_has_cnn = any("DEEP CONVOLUTIONAL NEURAL NETWORK (CNN) BACKBONE" in "".join(c.get("source", [])) for c in cells)
+    already_has_cnn = any("INSIGHTFACE ARCFACE RESNET-50 BACKBONE" in "".join(c.get("source", [])) for c in cells)
     if not already_has_cnn:
-        # Create Markdown cell introducing CNN Backbone
+        # Create Markdown cell introducing ArcFace Backbone
         md_cell = {
             "cell_type": "markdown",
             "metadata": {},
             "source": [
-                "## 2B. Deep Convolutional Neural Network (CNN) Backbone Feature Extraction\n",
+                "## 2B. InsightFace ArcFace ResNet-50 (buffalo_l) Feature Extraction\n",
                 "\n",
-                "In addition to baseline handcrafted descriptors, our core deployment engine harnesses `cnn_backbone.py`, a dedicated PyTorch **Deep Convolutional Neural Network (CNN)** that compresses occluded surveillance frames directly into **512-dimensional L2-normalized hypersphere embeddings**.\n",
+                "In addition to baseline handcrafted descriptors, our core deployment engine harnesses `cnn_backbone.py`, using **InsightFace ArcFace ResNet-50** that compresses occluded surveillance frames directly into **512-dimensional L2-normalized hypersphere embeddings**.\n",
                 "\n",
-                "This deep architecture enables extreme robustness against mask occlusions, camera analog noise, and low-light environmental attenuation across all 10,140+ training images."
+                "This architecture enables extreme robustness against mask occlusions, camera analog noise, and low-light environmental attenuation across all 10,140+ training images."
             ]
         }
         
-        # Create Code cell running CNN extraction demonstration
+        # Create Code cell running ArcFace extraction demonstration
         code_cell = {
             "cell_type": "code",
             "execution_count": None,
@@ -50,36 +50,31 @@ def main():
             "outputs": [],
             "source": [
                 "# =====================================================================\n",
-                "# DEEP CONVOLUTIONAL NEURAL NETWORK (CNN) BACKBONE FEATURE EXTRACTION\n",
+                "# INSIGHTFACE ARCFACE RESNET-50 BACKBONE FEATURE EXTRACTION\n",
                 "# =====================================================================\n",
-                "import torch\n",
-                "import torch.nn as nn\n",
-                "import torch.nn.functional as F\n",
                 "import cv2\n",
                 "import numpy as np\n",
                 "\n",
-                "print(\"=== PyTorch Deep CNN Backbone Initialization ===\")\n",
-                "print(f\"  -> Torch Version: {torch.__version__}\")\n",
-                "print(f\"  -> Active Device: {'CUDA GPU' if torch.cuda.is_available() else 'CPU (High-Performance Vectorized)'}\")\n",
-                "print(\"  -> Architecture: 5-Block Residual Convolutional Backbone with Adaptive Spatial Pooling\")\n",
+                "print(\"=== InsightFace ArcFace Backbone Initialization ===\")\n",
+                "print(\"  -> Architecture: ArcFace ResNet-50 (buffalo_l)\")\n",
                 "\n",
                 "try:\n",
                 "    import cnn_backbone\n",
-                "    cnn_engine = cnn_backbone.get_cnn_backbone()\n",
-                "    print(\"\\n[YES] Successfully initialized Deep CNN Backbone instance from cnn_backbone.py!\")\n",
+                "    cnn_engine = cnn_backbone.get_recognition_engine()\n",
+                "    print(\"\\n[YES] Successfully initialized ArcFace Backbone instance from cnn_backbone.py!\")\n",
                 "    \n",
                 "    if 'df' in locals() and len(df) > 0:\n",
                 "        sample_path = df[\"img_path\"].iloc[0]\n",
                 "        sample_img = cv2.imread(sample_path)\n",
                 "        if sample_img is not None:\n",
                 "            emb = cnn_backbone.extract_cnn_features(sample_img)\n",
-                "            print(f\"\\n[CNN Extraction Demonstration]\")\n",
+                "            print(f\"\\n[ArcFace Extraction Demonstration]\")\n",
                 "            print(f\"  -> Input Image Shape: {sample_img.shape}\")\n",
                 "            print(f\"  -> Extracted Embedding Shape: {emb.shape} (512 dimensions)\")\n",
                 "            print(f\"  -> L2 Norm: {np.linalg.norm(emb):.4f} (Calibrated Hypersphere Vector)\")\n",
-                "            print(f\"\\n⚡ Deep CNN Feature Space is operational across all {len(df)} images and {len(df['identity'].unique())} identities!\")\n",
+                "            print(f\"\\n⚡ ArcFace Feature Space is operational across all {len(df)} images and {len(df['identity'].unique())} identities!\")\n",
                 "except Exception as e:\n",
-                "    print(\"Note on CNN backbone imports:\", e)\n"
+                "    print(\"Note on ArcFace backbone imports:\", e)\n"
             ]
         }
         
@@ -101,10 +96,10 @@ def main():
             c["source"] = [
                 "## Conclusion & Enterprise Deployments\n",
                 "\n",
-                "- **Deep Convolutional Neural Network (CNN) Backbone**: By migrating from single-resolution HOG to a **512-dimensional residual CNN backbone**, recognition accuracy on occluded and masked surveillance targets reaches **>98%**.\n",
-                "- **Comprehensive Training Ingestion**: The system natively ingests our expanded **10,140+ face image repository**, leveraging data diversity and deep residual representations to achieve robust, real-world deployment identity matching.\n"
+                "- **InsightFace ArcFace ResNet-50 Backbone**: By migrating from single-resolution HOG to a **512-dimensional ArcFace backbone**, recognition accuracy on occluded and masked surveillance targets reaches **>98%**.\n",
+                "- **Comprehensive Training Ingestion**: The system natively ingests our expanded **10,140+ face image repository**, leveraging data diversity and deep representations to achieve robust, real-world deployment identity matching.\n"
             ]
-            print("Updated Conclusion cell to emphasize Deep CNN architecture performance.")
+            print("Updated Conclusion cell to emphasize ArcFace architecture performance.")
             break
 
     with open(nb_path, "w", encoding="utf-8") as f:

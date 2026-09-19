@@ -123,27 +123,27 @@ class ReIDStore:
             logger.warning("Failed to save re-ID JSON: %s", e)
 
     def _save_sighting(self, sighting: Sighting):
-        try:
-            from database import init_db
-            db = init_db()
-            db.reid_sightings.update_one(
-                {"sighting_id": sighting.sighting_id},
-                {"$set": {
-                    "sighting_id": sighting.sighting_id,
-                    "camera_id": sighting.camera_id,
-                    "track_id": sighting.track_id,
-                    "embedding": sighting.embedding,
-                    "first_seen": sighting.first_seen,
-                    "last_seen": sighting.last_seen,
-                    "global_person_id": sighting.global_person_id,
-                    "identity_name": sighting.identity_name,
-                }},
-                upsert=True,
-            )
-            self._mongo_ok = True
-        except Exception as e:
-            logger.warning("Failed to save re-ID sighting to MongoDB: %s", e)
-            self._mongo_ok = False
+        if self._mongo_ok:
+            try:
+                from database import init_db
+                db = init_db()
+                db.reid_sightings.update_one(
+                    {"sighting_id": sighting.sighting_id},
+                    {"$set": {
+                        "sighting_id": sighting.sighting_id,
+                        "camera_id": sighting.camera_id,
+                        "track_id": sighting.track_id,
+                        "embedding": sighting.embedding,
+                        "first_seen": sighting.first_seen,
+                        "last_seen": sighting.last_seen,
+                        "global_person_id": sighting.global_person_id,
+                        "identity_name": sighting.identity_name,
+                    }},
+                    upsert=True,
+                )
+            except Exception as e:
+                logger.warning("Failed to save re-ID sighting to MongoDB: %s", e)
+                self._mongo_ok = False
         self._save_json()
 
     def _save_sighting_batch(self, sightings: list[Sighting]):

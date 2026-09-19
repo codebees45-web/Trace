@@ -392,21 +392,39 @@ def predict_identity(img_bgr, threshold: Optional[float] = None, top_k: int = 3)
 
 def detect_face_bbox(img_bgr):
     """Returns (x, y, w, h) of the largest detected face, or None if no face found."""
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    faces = _face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
-    if len(faces) == 0:
+    try:
+        dets = video_pipeline.detect_and_embed(img_bgr, frame_idx=0, det_score_thresh=0.25)
+    except Exception:
+        # Graceful fallback if insightface fails/isn't loaded
+        dets = []
+        
+    if not dets:
         return None
-    faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
-    return tuple(int(v) for v in faces[0])
+        
+    # Sort by size (width * height)
+    dets = sorted(dets, key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]), reverse=True)
+    best = dets[0].bbox
+    x, y, w, h = int(best[0]), int(best[1]), int(best[2] - best[0]), int(best[3] - best[1])
+    return (max(0, x), max(0, y), max(1, w), max(1, h))
 
 
 def detect_all_faces(img_bgr):
     """Returns list of (x, y, w, h) for ALL detected faces, sorted by size (largest first)."""
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    faces = _face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
-    if len(faces) == 0:
+    try:
+        dets = video_pipeline.detect_and_embed(img_bgr, frame_idx=0, det_score_thresh=0.25)
+    except Exception:
+        dets = []
+        
+    if not dets:
         return []
-    return [tuple(int(v) for v in f) for f in sorted(faces, key=lambda f: f[2] * f[3], reverse=True)]
+        
+    dets = sorted(dets, key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]), reverse=True)
+    faces = []
+    for d in dets:
+        b = d.bbox
+        x, y, w, h = int(b[0]), int(b[1]), int(b[2] - b[0]), int(b[3] - b[1])
+        faces.append((max(0, x), max(0, y), max(1, w), max(1, h)))
+    return faces
 
 
 def build_lower_face_mask(size, bbox):
@@ -511,7 +529,7 @@ def draw_face_annotations(img_bgr, faces_data):
 def run_full_pipeline(img_bgr):
     """CPU/GPU-bound work, executed off the event loop via run_in_threadpool.
 
-    Returns a 4-tuple: (result, restored, quality, trust_score).
+    Returns a 5-tuple: (result, restored, quality, trust_score, face_detected).
     trust_score is a float in [0, 1] measuring ArcFace cosine similarity
     between the original masked face crop and the SD-reconstructed face.
     It is None when generation is disabled or generation failed.
@@ -545,7 +563,7 @@ def run_full_pipeline(img_bgr):
         except Exception:
             logger.warning("Could not compute reconstruction trust score", exc_info=True)
 
-    return result, restored, quality, trust_score
+    return result, restored, quality, trust_score, (bbox is not None)
 
 
 # ---------------------------------------------------------------------------
@@ -736,7 +754,7 @@ async def predict(
     if img_bgr is None:
         raise HTTPException(status_code=422, detail="Couldn't read that as an image")
 
-    result, restored, quality, trust_score = await run_in_threadpool(run_full_pipeline, img_bgr)
+    result, restored, quality, trust_score, face_detected = await run_in_threadpool(run_full_pipeline, img_bgr)
 
     saved = False
     if current_user is not None:
@@ -767,6 +785,7 @@ async def predict(
         face_quality=schemas.FaceQuality(**quality) if quality else None,
         top_k_matches=[schemas.TopKMatch(**m) for m in result.get("top_k_matches", [])],
         reconstruction_trust_score=trust_score,
+        face_detected=face_detected,
     )
 
 

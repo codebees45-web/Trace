@@ -90,6 +90,7 @@ class PredictResponse(BaseModel):
     input_image: str
     generated_image: str
     saved_to_history: bool
+    face_detected: bool
     face_quality: Optional[FaceQuality] = None
     top_k_matches: list[TopKMatch] = []
     reconstruction_trust_score: Optional[float] = None

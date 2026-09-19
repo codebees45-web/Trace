@@ -98,18 +98,18 @@ class VideoGallery:
             logger.warning("Failed to save local JSON gallery: %s", e)
 
     def _save_entry(self, entry: VideoGalleryEntry):
-        try:
-            db = init_db()
-            db.video_gallery_embeddings.update_one(
-                {"identity": entry.identity},
-                {"$set": {"identity": entry.identity, "embeddings": entry.embeddings,
-                          "created_at": entry.created_at}},
-                upsert=True,
-            )
-            self._mongo_ok = True
-        except Exception as e:
-            logger.warning("Failed to save video gallery embedding to MongoDB: %s", e)
-            self._mongo_ok = False
+        if self._mongo_ok:
+            try:
+                db = init_db()
+                db.video_gallery_embeddings.update_one(
+                    {"identity": entry.identity},
+                    {"$set": {"identity": entry.identity, "embeddings": entry.embeddings,
+                              "created_at": entry.created_at}},
+                    upsert=True,
+                )
+            except Exception as e:
+                logger.warning("Failed to save video gallery embedding to MongoDB: %s", e)
+                self._mongo_ok = False
         self._save_json()
 
     def enroll(self, identity: str, embedding: np.ndarray):
