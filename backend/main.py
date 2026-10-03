@@ -1099,42 +1099,60 @@ async def enroll_identity(
             if not dets:
                 continue
 
-            # ── Enroll ALL detected faces (important for group photos) ──
-            # Previously only the largest face was enrolled, so in a 2-person
-            # photo only one person would be registered. Now we enroll every
-            # detected face, which is correct for a gallery intended to hold
-            # multiple people. The caller is expected to pass one photo per
-            # person when enrolling under a specific name.
-            for det in dets:
-                video_gallery.enroll(identity, det.embedding)
-                embeddings_added += 1
+            # ── Enroll only the LARGEST detected face ──
+            # When enrolling a specific named identity, we want the main/largest
+            # face in the photo — enrolling ALL faces would poison the gallery
+            # with wrong-person embeddings if there are bystanders in the frame.
+            det = max(dets, key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]))
 
-                # Horizontal-flip augmentation — increases robustness to side profiles
-                x1, y1, x2, y2 = [int(v) for v in det.bbox]
-                x1 = max(0, x1); y1 = max(0, y1)
-                x2 = min(img_bgr.shape[1], x2); y2 = min(img_bgr.shape[0], y2)
-                face_crop = img_bgr[y1:y2, x1:x2]
-                if face_crop.size > 0:
-                    flipped = cv2.flip(face_crop, 1)
-                    # Embed the flipped crop by resizing to a full image and re-detecting
-                    # (simpler: just embed the crop directly if the pipeline supports it)
-                    flip_full = cv2.resize(flipped, (img_bgr.shape[1], img_bgr.shape[0]))
-                    flip_dets = video_pipeline.detect_and_embed(flip_full, frame_idx=0, det_score_thresh=0.2)
-                    for fd in flip_dets:
-                        video_gallery.enroll(identity, fd.embedding)
+            thumbnail_base64 = None
+            if det.crop is not None:
+                import base64
+                ok, encoded = cv2.imencode('.jpg', det.crop)
+                if ok:
+                    thumbnail_base64 = base64.b64encode(encoded).decode('utf-8')
+
+            video_gallery.enroll(identity, det.embedding, thumbnail=thumbnail_base64)
+            embeddings_added += 1
+
+            # ── Augmentation: horizontal flip ──
+            x1, y1, x2, y2 = [int(v) for v in det.bbox]
+            x1 = max(0, x1); y1 = max(0, y1)
+            x2 = min(img_bgr.shape[1], x2); y2 = min(img_bgr.shape[0], y2)
+            face_crop = img_bgr[y1:y2, x1:x2]
+            if face_crop.size > 0:
+                flipped = cv2.flip(face_crop, 1)
+                # Pad the flipped crop onto a canvas instead of stretching to full-image
+                # dimensions — stretching distorts the face and produces noisy embeddings.
+                pad = max(flipped.shape[0], flipped.shape[1]) // 2
+                canvas = cv2.copyMakeBorder(flipped, pad, pad, pad, pad,
+                                             cv2.BORDER_CONSTANT, value=(128, 128, 128))
+                flip_dets = video_pipeline.detect_and_embed(canvas, frame_idx=0, det_score_thresh=0.2)
+                for fd in flip_dets:
+                    video_gallery.enroll(identity, fd.embedding)
+                    embeddings_added += 1
+
+            # ── Augmentation: brightness/contrast variants ──
+            for alpha, beta in [(1.2, 15), (0.8, -15)]:
+                aug_img = cv2.convertScaleAbs(img_bgr, alpha=alpha, beta=beta)
+                aug_dets = video_pipeline.detect_and_embed(aug_img, frame_idx=0, det_score_thresh=0.25)
+                if aug_dets:
+                    aug_det = max(aug_dets, key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]))
+                    video_gallery.enroll(identity, aug_det.embedding)
+                    embeddings_added += 1
+
+            # ── Auto-generate a masked variant and enroll it too ──
+            if det.kps is not None:
+                try:
+                    masked_img = mask_synth.synthesize_masked_face(img_bgr, det.kps, det.bbox)
+                    masked_dets = video_pipeline.detect_and_embed(masked_img, frame_idx=0, det_score_thresh=0.25)
+                    if masked_dets:
+                        masked_det = max(masked_dets, key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]))
+                        video_gallery.enroll(identity, masked_det.embedding)
                         embeddings_added += 1
-
-                # Auto-generate a masked variant and enroll it too
-                if det.kps is not None:
-                    try:
-                        masked_img = mask_synth.synthesize_masked_face(img_bgr, det.kps, det.bbox)
-                        masked_dets = video_pipeline.detect_and_embed(masked_img, frame_idx=0, det_score_thresh=0.25)
-                        for md in masked_dets:
-                            video_gallery.enroll(identity, md.embedding)
-                            embeddings_added += 1
-                    except Exception:
-                        logger.warning("Synthetic mask generation failed for one photo; continuing without it.",
-                                        exc_info=True)
+                except Exception:
+                    logger.warning("Synthetic mask generation failed for one photo; continuing without it.",
+                                    exc_info=True)
         return embeddings_added
 
     embeddings_added = await run_in_threadpool(_process)
@@ -1151,7 +1169,7 @@ async def enroll_identity(
 
 @app.get("/enroll/identities", response_model=schemas.EnrollIdentitiesResponse)
 async def enroll_identities():
-    return schemas.EnrollIdentitiesResponse(identities=video_gallery.identities())
+    return schemas.EnrollIdentitiesResponse(identities=video_gallery.identities_info())
 
 
 @app.post("/enroll/preview")
@@ -1301,6 +1319,7 @@ async def identify_video(
         raw_confidence=top["raw_similarity"],
         frames_used=result["frames_processed"],
         detail=detail,
+        face_image_base64=top.get("face_image_base64"),
         candidates=candidates,
         tracks=[schemas.TrackResult(**t) for t in tracks],
         num_tracks=result["num_tracks"],

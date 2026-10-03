@@ -292,16 +292,33 @@ const VideoIdentify = () => {
             <p className="muted">No identities enrolled yet.</p>
           ) : (
             <ul>
-              {identities.map((identity) => (
-                <li key={identity} className="enrolled-row">
-                  <span>{identity}</span>
-                  <button
-                    className="remove-btn"
-                    aria-label={`Remove ${identity}`}
-                    onClick={() => handleDeleteIdentity(identity)}
-                  >
-                    ×
-                  </button>
+              {identities.map((item) => (
+                <li key={item.identity} className="enrolled-row" style={{ display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                    <span 
+                      style={{ cursor: 'pointer', textDecoration: item.thumbnail ? 'underline' : 'none' }}
+                      onClick={(e) => {
+                        const img = e.currentTarget.parentElement.nextElementSibling;
+                        if (img) img.style.display = img.style.display === 'none' ? 'block' : 'none';
+                      }}
+                    >
+                      {item.identity}
+                    </span>
+                    <button
+                      className="remove-btn"
+                      aria-label={`Remove ${item.identity}`}
+                      onClick={() => handleDeleteIdentity(item.identity)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  {item.thumbnail && (
+                    <img 
+                      src={`data:image/jpeg;base64,${item.thumbnail}`}
+                      alt={`${item.identity} thumbnail`}
+                      style={{ display: 'none', width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', marginTop: '0.5rem' }}
+                    />
+                  )}
                 </li>
               ))}
             </ul>
@@ -356,6 +373,18 @@ const VideoIdentify = () => {
                 </span>
               )}
             </div>
+
+            {videoResult.face_image_base64 && (
+              <div className="video-result-face">
+                <img 
+                  src={`data:image/jpeg;base64,${videoResult.face_image_base64}`} 
+                  alt="Detected face" 
+                  style={{ width: "100px", height: "100px", objectFit: "cover", borderRadius: "8px", margin: "1rem 0" }} 
+                />
+                <p className="muted" style={{ margin: "0.25rem 0 1rem 0", fontSize: "0.85em" }}>Representative frame crop</p>
+              </div>
+            )}
+
             {typeof videoResult.raw_confidence === "number" && (
               <p className="muted">
                 raw similarity: {videoResult.raw_confidence.toFixed(3)}{" "}
@@ -369,15 +398,29 @@ const VideoIdentify = () => {
               {videoResult.detail ? ` — ${videoResult.detail}` : ""}
             </p>
 
-            {videoResult.candidates && videoResult.candidates.length > 0 && (
-              <ul className="candidate-list">
-                {videoResult.candidates.map((c) => (
-                  <li key={c.identity}>
-                    <span>{c.identity}</span>
-                    <span className="muted">score {c.score}</span>
-                  </li>
-                ))}
-              </ul>
+            {videoResult.tracks && videoResult.tracks.length > 1 && (
+              <div className="other-tracks">
+                <h4 style={{ margin: "1.5rem 0 0.5rem 0" }}>Other tracked faces:</h4>
+                <ul className="candidate-list" style={{ listStyle: "none", padding: 0 }}>
+                  {videoResult.tracks.slice(1).map((t, idx) => (
+                    <li key={`${t.identity}-${idx}`} style={{ display: "flex", alignItems: "center", marginBottom: "1rem", gap: "1rem" }}>
+                      {t.face_image_base64 && (
+                        <img 
+                          src={`data:image/jpeg;base64,${t.face_image_base64}`} 
+                          alt="Other face" 
+                          style={{ width: "50px", height: "50px", objectFit: "cover", borderRadius: "4px" }} 
+                        />
+                      )}
+                      <div style={{ display: "flex", flexDirection: "column" }}>
+                        <span>{t.identity}</span>
+                        <span className="muted" style={{ fontSize: "0.85em" }}>
+                          score: {(t.confidence * 100).toFixed(1)}% (raw: {t.raw_similarity.toFixed(3)})
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
         )}

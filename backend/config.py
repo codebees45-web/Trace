@@ -61,14 +61,14 @@ class Settings(BaseSettings):
     # Video pipeline (SCRFD detection + ArcFace embedding + IOU tracking + voting)
     max_upload_video_mb: int = 200
     video_rate_limit: str = "10/minute"
-    video_sample_every_n_frames: int = 20
-    video_max_frames_sampled: int = 120
-    video_det_size: int = 320
-    video_det_score_thresh: float = 0.30   # lowered: catch dark/small/angled faces
+    video_sample_every_n_frames: int = 15   # Sample more densely (~every 0.5s at 30fps) to catch clearer frames
+    video_max_frames_sampled: int = 30      # More frames = more votes = more robust identity decision
+    video_det_size: int = 640               # Full resolution for SCRFD — 320 was too low and degraded embedding quality
+    video_det_score_thresh: float = 0.25   # lowered: catch dark/small/angled faces
     video_track_iou_threshold: float = 0.3
     video_track_max_age: int = 15
-    video_min_similarity: float = 0.40   # calibrated against real footage
-    video_min_margin: float = 0.10
+    video_min_similarity: float = 0.20   # Lowered significantly to accept tougher matches (e.g. masks, blur)
+    video_min_margin: float = 0.05       # Lowered margin required to beat the runner-up identity
 
     # Confidence calibration — maps raw ArcFace cosine similarity to the
     # displayed "confidence" percentage via a logistic curve, instead of
@@ -78,8 +78,8 @@ class Settings(BaseSettings):
     # how sharply confidence rises around it. Re-fit both with
     # backend/calibrate.py against your own gallery + sample videos rather
     # than trusting these defaults for anything high-stakes.
-    video_calib_midpoint: float = 0.45
-    video_calib_slope: float = 29.0
+    video_calib_midpoint: float = 0.25   # Lowered so that raw scores around 0.3 yield high confidence
+    video_calib_slope: float = 35.0
 
     # Live camera WebSocket pipeline (/ws/live)
     # Uses the fast HOG/CNN pipeline — Stable Diffusion is always skipped.

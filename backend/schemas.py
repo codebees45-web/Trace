@@ -170,8 +170,12 @@ class EnrollResponse(BaseModel):
     total_identities: int
 
 
+class EnrolledIdentityInfo(BaseModel):
+    identity: str
+    thumbnail: Optional[str] = None
+
 class EnrollIdentitiesResponse(BaseModel):
-    identities: list[str]
+    identities: list[EnrolledIdentityInfo]
 
 
 class VideoCandidate(BaseModel):
@@ -197,6 +201,7 @@ class TrackResult(BaseModel):
     frames_considered: int
     last_bbox: TrackBBox
     avg_det_score: float
+    face_image_base64: Optional[str] = None
 
 
 class IdentifyVideoResponse(BaseModel):
@@ -206,6 +211,7 @@ class IdentifyVideoResponse(BaseModel):
     raw_confidence: float = 0.0
     frames_used: int
     detail: Optional[str] = None
+    face_image_base64: Optional[str] = None
     candidates: list[VideoCandidate] = []
     # Extra detail for future multi-person UI — safe to ignore client-side.
     tracks: list[TrackResult] = []

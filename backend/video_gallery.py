@@ -26,6 +26,8 @@ class VideoGalleryEntry:
     identity: str
     embeddings: list  # list of list[float], each L2-normalized 512-d ArcFace vector
     created_at: float = field(default_factory=time.time)
+    thumbnail: Optional[str] = None
+
 
 
 class VideoGallery:
@@ -62,6 +64,7 @@ class VideoGallery:
                         identity=identity,
                         embeddings=doc.get("embeddings", []),
                         created_at=doc.get("created_at", time.time()),
+                        thumbnail=doc.get("thumbnail"),
                     )
                 self._mongo_ok = True
                 logger.info("Loaded video gallery from MongoDB: %d identities", len(self._entries))
@@ -81,6 +84,7 @@ class VideoGallery:
                     identity=identity,
                     embeddings=item.get("embeddings", []),
                     created_at=item.get("created_at", time.time()),
+                    thumbnail=item.get("thumbnail"),
                 )
             logger.info("Loaded video gallery from local JSON: %d identities", len(self._entries))
         except Exception as e:
@@ -89,7 +93,7 @@ class VideoGallery:
     def _save_json(self):
         try:
             data = {
-                identity: {"embeddings": entry.embeddings, "created_at": entry.created_at}
+                identity: {"embeddings": entry.embeddings, "created_at": entry.created_at, "thumbnail": entry.thumbnail}
                 for identity, entry in self._entries.items()
             }
             with open(_GALLERY_JSON, "w", encoding="utf-8") as f:
@@ -104,7 +108,7 @@ class VideoGallery:
                 db.video_gallery_embeddings.update_one(
                     {"identity": entry.identity},
                     {"$set": {"identity": entry.identity, "embeddings": entry.embeddings,
-                              "created_at": entry.created_at}},
+                              "created_at": entry.created_at, "thumbnail": entry.thumbnail}},
                     upsert=True,
                 )
             except Exception as e:
@@ -112,13 +116,15 @@ class VideoGallery:
                 self._mongo_ok = False
         self._save_json()
 
-    def enroll(self, identity: str, embedding: np.ndarray):
+    def enroll(self, identity: str, embedding: np.ndarray, thumbnail: Optional[str] = None):
         norm = embedding / (np.linalg.norm(embedding) + 1e-8)
         entry = self._entries.get(identity)
         if entry is None:
             entry = VideoGalleryEntry(identity=identity, embeddings=[])
             self._entries[identity] = entry
         entry.embeddings.append(norm.tolist())
+        if thumbnail and not entry.thumbnail:
+            entry.thumbnail = thumbnail
         self._save_entry(entry)
 
     def remove(self, identity: str) -> bool:
@@ -135,6 +141,9 @@ class VideoGallery:
 
     def identities(self) -> list[str]:
         return list(self._entries.keys())
+
+    def identities_info(self) -> list[dict]:
+        return [{"identity": e.identity, "thumbnail": e.thumbnail} for e in self._entries.values()]
 
     def is_empty(self) -> bool:
         return len(self._entries) == 0

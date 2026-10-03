@@ -95,6 +95,8 @@ class Detection:
     det_score: float
     frame_idx: int
     kps: Optional[np.ndarray] = None  # 5-point landmarks (eyes, nose, mouth corners), if available
+    crop: Optional[np.ndarray] = None # Face crop image
+
 
 
 def detect_and_embed(frame_bgr, frame_idx: int, det_score_thresh: float = 0.45, det_size: int = 640) -> list[Detection]:
@@ -106,9 +108,16 @@ def detect_and_embed(frame_bgr, frame_idx: int, det_score_thresh: float = 0.45, 
             continue
         emb = f.normed_embedding  # InsightFace already L2-normalizes this
         x1, y1, x2, y2 = [int(v) for v in f.bbox]
+        
+        # Clamp bbox to frame boundaries
+        h, w = frame_bgr.shape[:2]
+        cx1, cy1 = max(0, x1), max(0, y1)
+        cx2, cy2 = min(w, x2), min(h, y2)
+        crop = frame_bgr[cy1:cy2, cx1:cx2].copy() if cy2 > cy1 and cx2 > cx1 else None
+
         kps = getattr(f, "kps", None)
         out.append(Detection(bbox=(x1, y1, x2, y2), embedding=emb, det_score=float(f.det_score),
-                              frame_idx=frame_idx, kps=kps))
+                              frame_idx=frame_idx, kps=kps, crop=crop))
     return out
 
 
@@ -141,6 +150,9 @@ class Track:
     last_seen_frame: int
     embeddings: list = field(default_factory=list)   # every Detection.embedding assigned to this track
     det_scores: list = field(default_factory=list)
+    best_crop: Optional[np.ndarray] = None
+    best_det_score: float = -1.0
+
 
 
 class IOUTracker:
@@ -167,6 +179,9 @@ class IOUTracker:
                 track.last_seen_frame = frame_idx
                 track.embeddings.append(det.embedding)
                 track.det_scores.append(det.det_score)
+                if det.det_score > track.best_det_score and det.crop is not None:
+                    track.best_det_score = det.det_score
+                    track.best_crop = det.crop
                 unmatched_dets.remove(best_det_idx)
                 matched_track_ids.add(track_id)
 
@@ -176,6 +191,9 @@ class IOUTracker:
             t = Track(track_id=self._next_id, bbox=det.bbox, last_seen_frame=frame_idx)
             t.embeddings.append(det.embedding)
             t.det_scores.append(det.det_score)
+            if det.crop is not None:
+                t.best_crop = det.crop
+                t.best_det_score = det.det_score
             self._tracks[self._next_id] = t
             self._next_id += 1
 
@@ -319,16 +337,18 @@ def process_video(
     processed_frames = 0
 
     while True:
+        target_frame = processed_frames * sample_every_n_frames
+        cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
         ok, frame = cap.read()
         if not ok:
             break
-        if frame_idx % sample_every_n_frames == 0:
-            dets = detect_and_embed(frame, frame_idx, det_score_thresh=det_score_thresh, det_size=det_size)
-            tracker.update(dets, frame_idx)
-            processed_frames += 1
-            if max_frames and processed_frames >= max_frames:
-                break
-        frame_idx += 1
+            
+        dets = detect_and_embed(frame, target_frame, det_score_thresh=det_score_thresh, det_size=det_size)
+        tracker.update(dets, target_frame)
+        processed_frames += 1
+        
+        if max_frames and processed_frames >= max_frames:
+            break
 
     cap.release()
 
@@ -338,6 +358,14 @@ def process_video(
             track.embeddings, gallery, min_similarity=min_similarity, min_margin=min_margin,
             calib_midpoint=calib_midpoint, calib_slope=calib_slope,
         )
+        
+        face_image_base64 = None
+        if track.best_crop is not None:
+            import base64
+            ok, encoded = cv2.imencode('.jpg', track.best_crop)
+            if ok:
+                face_image_base64 = base64.b64encode(encoded).decode('utf-8')
+                
         results.append({
             "track_id": track.track_id,
             "identity": decision["identity"],
@@ -347,6 +375,7 @@ def process_video(
             "frames_considered": decision["frames_considered"],
             "last_bbox": {"x1": track.bbox[0], "y1": track.bbox[1], "x2": track.bbox[2], "y2": track.bbox[3]},
             "avg_det_score": round(float(np.mean(track.det_scores)), 4) if track.det_scores else 0.0,
+            "face_image_base64": face_image_base64,
         })
 
     # Highest-confidence identified person first; unresolved tracks last.
